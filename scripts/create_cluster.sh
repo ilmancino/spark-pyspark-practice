@@ -1,0 +1,12 @@
+gcloud dataproc clusters create cluster-383e \
+  --enable-component-gateway \
+  --region us-west1 \
+  --zone us-west1-a \
+  --no-address \
+  --single-node \
+  --master-machine-type n1-standard-2 \
+  --master-boot-disk-type pd-balanced \
+  --master-boot-disk-size 400 \
+  --image-version 2.2-debian12 \
+  --optional-components JUPYTER \
+  --project centi-data-engineering
