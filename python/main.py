@@ -7,10 +7,10 @@ SOURCE_PATH = 'gs://dataproc-data-centi/pyspark_practice/source'
 
 def get_session() -> SparkSession:
     ss = SparkSession.builder.appName("Simple PySpark Practice"). \
-        config("spark.jars",
-               "https://storage.googleapis.com/spark-lib/bigquery/spark-3.5-bigquery-0.41.0.jar,https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar"). \
         getOrCreate()
-    #
+    #        config("spark.jars",
+    #           "https://storage.googleapis.com/spark-lib/bigquery/spark-3.5-bigquery-0.41.0.jar,https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar"). \
+
 
     ss.conf.set("google.cloud.auth.service.account.enable", "true")
     ss.conf.set("google.cloud.auth.service.account.json.keyfile", "/opt/tkns/centi-data-engineering-f007bbb116ab.json")
@@ -26,6 +26,8 @@ def clean_up(data: DataFrame):
                        'COLLISION_ID']
 
     df = data.drop(*cols_not_needed)
+
+    df = df.filter(df['CRASH DATE'].isNotNull())
 
     return df
 
@@ -154,7 +156,7 @@ def pipeline():
     session = get_session()
 
     df = session.read.format('gcs'). \
-        csv(path=f'{SOURCE_PATH}/Motor_Vehicle_Collisions_-_Crashes_HEAD.csv',
+        csv(path=f'{SOURCE_PATH}/Motor_Vehicle_Collisions_-_Crashes.csv',
             header=True, inferSchema=True)
 
     # clean up
