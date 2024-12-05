@@ -1,19 +1,27 @@
+import sys
+
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import count, mean, to_date, hour, date_format, sum, col
+from pyspark.sql.functions import count, mean, to_date, locate, date_format, sum, col, expr, lpad
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
 
 BIGQUERY_DATASET = 'pyspark_practice'
 GCS_BUCKET = 'dataproc-data-centi'
 SOURCE_PATH = 'gs://dataproc-data-centi/pyspark_practice/source'
+execution_mode = 'local'
 
 def get_session() -> SparkSession:
+    global execution_mode
+
     ss = SparkSession.builder.appName("Simple PySpark Practice"). \
         getOrCreate()
     #        config("spark.jars",
     #           "https://storage.googleapis.com/spark-lib/bigquery/spark-3.5-bigquery-0.41.0.jar,https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar"). \
 
 
-    ss.conf.set("google.cloud.auth.service.account.enable", "true")
-    ss.conf.set("google.cloud.auth.service.account.json.keyfile", "/opt/tkns/centi-data-engineering-f007bbb116ab.json")
+    if execution_mode == 'local':
+        ss.conf.set("google.cloud.auth.service.account.enable", "true")
+        ss.conf.set("google.cloud.auth.service.account.json.keyfile", "/opt/tkns/centi-data-engineering-f007bbb116ab.json")
+
     ss.conf.set("temporaryGcsBucket", GCS_BUCKET)
 
     return ss
@@ -26,16 +34,16 @@ def clean_up(data: DataFrame):
                        'COLLISION_ID']
 
     df = data.drop(*cols_not_needed)
-
-    df = df.filter(df['CRASH DATE'].isNotNull())
+    df = df.filter(col('CRASH DATE').rlike('[0-9]{2}/[0-9]{2}/[0-9]{4}'))
 
     return df
 
 
-def explore_data():
-    session = get_session()
+def explore_data(mode: str):
+    global execution_mode
 
-    #dm = session.conf.get("spark.submit.deployMode")
+    execution_mode = mode
+    session = get_session()
 
     df = session.read.format('gcs'). \
         csv(path=f'{SOURCE_PATH}/Motor_Vehicle_Collisions_-_Crashes_HEAD.csv',
@@ -86,7 +94,10 @@ def store_unused_agg(data: DataFrame):
 
 def calculate_metrics(data: DataFrame):
     # crashes by hour of day
-    crashes_per_hour = data.withColumn('hour_of_day', hour('CRASH TIME'))
+    crashes_per_hour = data.withColumn('position', locate(':', col('CRASH TIME'))). \
+        withColumn('hour_of_day', expr('substring(`CRASH TIME`, 1, position - 1)')). \
+        withColumn('hour_of_day', lpad(col('hour_of_day'), 2, '0'))
+
     crashes_per_hour = crashes_per_hour.groupBy('hour_of_day').agg(count('*').alias('count'))
     crashes_per_hour.write.format('bigquery'). \
         option('table', f'{BIGQUERY_DATASET}.crashes_per_hour'). \
@@ -152,12 +163,50 @@ def show_metrics(data: DataFrame):
     season_metrics.show()
 
 
-def pipeline():
+def pipeline(mode: str, source_file: str):
+    global execution_mode
+
+    print(f"Working in mode: {mode}")
+    print(f"The source file is: {source_file}")
+
+    execution_mode = mode
     session = get_session()
 
+    csv_schema = StructType([
+        StructField(name='CRASH DATE', dataType=StringType()),
+        StructField(name='CRASH TIME', dataType=StringType()),
+        StructField(name='BOROUGH', dataType=StringType()),
+        StructField(name='ZIP CODE', dataType=StringType()),
+        StructField(name='LATITUDE', dataType=FloatType()),
+        StructField(name='LONGITUDE', dataType=FloatType()),
+        StructField(name='LOCATION', dataType=StringType()),
+        StructField(name='ON STREET NAME', dataType=StringType()),
+        StructField(name='CROSS STREET NAME', dataType=StringType()),
+        StructField(name='OFF STREET NAME', dataType=StringType()),
+        StructField(name='NUMBER OF PERSONS INJURED', dataType=IntegerType()),
+        StructField(name='NUMBER OF PERSONS KILLED', dataType=IntegerType()),
+        StructField(name='NUMBER OF PEDESTRIANS INJURED', dataType=IntegerType()),
+        StructField(name='NUMBER OF PEDESTRIANS KILLED', dataType=IntegerType()),
+        StructField(name='NUMBER OF CYCLIST INJURED', dataType=IntegerType()),
+        StructField(name='NUMBER OF CYCLIST KILLED', dataType=IntegerType()),
+        StructField(name='NUMBER OF MOTORIST INJURED', dataType=IntegerType()),
+        StructField(name='NUMBER OF MOTORIST KILLED', dataType=IntegerType()),
+        StructField(name='CONTRIBUTING FACTOR VEHICLE 1', dataType=StringType()),
+        StructField(name='CONTRIBUTING FACTOR VEHICLE 2', dataType=StringType()),
+        StructField(name='CONTRIBUTING FACTOR VEHICLE 3', dataType=StringType()),
+        StructField(name='CONTRIBUTING FACTOR VEHICLE 4', dataType=StringType()),
+        StructField(name='CONTRIBUTING FACTOR VEHICLE 5', dataType=StringType()),
+        StructField(name='COLLISION_ID', dataType=StringType()),
+        StructField(name='VEHICLE TYPE CODE 1', dataType=StringType()),
+        StructField(name='VEHICLE TYPE CODE 2', dataType=StringType()),
+        StructField(name='VEHICLE TYPE CODE 3', dataType=StringType()),
+        StructField(name='VEHICLE TYPE CODE 4', dataType=StringType()),
+        StructField(name='VEHICLE TYPE CODE 5', dataType=StringType())
+    ])
     df = session.read.format('gcs'). \
-        csv(path=f'{SOURCE_PATH}/Motor_Vehicle_Collisions_-_Crashes.csv',
-            header=True, inferSchema=True)
+        csv(path=f'{SOURCE_PATH}/{source_file}',
+            header=True, inferSchema=False,
+            schema=csv_schema)
 
     # clean up
     df = clean_up(df)
@@ -182,4 +231,4 @@ def pipeline():
 
 if __name__ == '__main__':
     #explore_data()
-    pipeline()
+    pipeline(sys.argv[1], sys.argv[2])
